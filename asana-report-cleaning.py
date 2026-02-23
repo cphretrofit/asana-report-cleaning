@@ -98,26 +98,9 @@ st.markdown("""
         box-shadow: none;
     }
     
-    .select-box {
-        margin-bottom: 1.5rem;
-    }
-    
-    .select-box label {
-        display: block;
-        font-weight: 500;
-        color: #374151;
-        margin-bottom: 0.5rem;
-        font-size: 0.9rem;
-    }
-    
-    .stSelectbox > div > div {
-        border-radius: 8px !important;
-        border-color: #d1d5db !important;
-    }
-    
     .stats {
         display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
+        grid-template-columns: 1fr 1fr 1fr 1fr;
         gap: 1rem;
         margin: 1.5rem 0;
     }
@@ -186,6 +169,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def normalize_address(value):
+    if pd.isna(value) or str(value).strip() == "":
+        return None
+    addr = str(value).strip().lower()
+    addr = addr.replace('.', '').replace(',', '').replace('#', '').replace('\n', ' ')
+    addr = ' '.join(addr.split())
+    return addr
+
 def has_address(value):
     if pd.isna(value) or str(value).strip() == "":
         return False
@@ -201,95 +192,77 @@ def has_address(value):
     ]
     return any(indicator in val for indicator in address_indicators)
 
-def is_action_item(value):
-    if pd.isna(value) or str(value).strip() == "":
-        return False
-    val = str(value).strip().lower()
-    action_indicators = [
-        'call', 'email', 'send', 'follow up', 'followup', 'check', 'review',
-        'submit', 'complete', 'finish', 'update', 'prepare', 'schedule',
-        'arrange', 'confirm', 'verify', 'process', 'create', 'draft',
-        'research', 'investigate', 'analyze', 'organize', 'file',
-        'pick up', 'drop off', 'deliver', 'install', 'fix', 'repair',
-        'clean', 'paint', 'replace', 'order', 'purchase', 'buy'
-    ]
-    return any(val.startswith(indicator) or indicator in val for indicator in action_indicators)
-
 st.markdown('<div class="container"><div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="title">🧹 CSV Cleaner</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Clean your Asana exports by removing subtasks</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Clean your Asana exports by removing subtasks and duplicates</div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("", type=["csv"])
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file, dtype=str)
     
-    columns = list(df.columns)
+    parent_col = 'Parent task'
     
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        address_col = st.selectbox(
-            "Address column",
-            options=columns,
-            index=0 if "address" in " ".join(columns).lower() else 0,
-            help="Select the column containing addresses to identify primary tasks"
-        )
-    with col2:
-        name_col = st.selectbox(
-            "Task name column",
-            options=columns,
-            index=1 if len(columns) > 1 else 0,
-            help="Select the task name column to detect action items"
-        )
-    
-    st.markdown(f'<p class="info-text">Primary tasks are identified by having an address in "{address_col}". Subtasks (action items) without addresses will be removed.</p>', unsafe_allow_html=True)
-    
-    if st.button("Clean CSV", disabled=False):
-        original_count = len(df)
+    if parent_col not in df.columns:
+        st.error(f"Column '{parent_col}' not found in the CSV. Please ensure your file has this column.")
+    else:
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         
-        mask = df[address_col].apply(has_address)
-        filtered_df = df[mask].copy()
+        st.markdown(f'<p class="info-text">Primary tasks are identified by having an address in "{parent_col}". Subtasks without addresses and duplicate addresses will be removed.</p>', unsafe_allow_html=True)
         
-        final_count = len(filtered_df)
-        removed_count = original_count - final_count
-        
-        if 'Parent task' in filtered_df.columns:
-            cols = list(filtered_df.columns)
-            parent_idx = cols.index('Parent task')
-            cols.remove('Parent task')
-            cols.insert(1, 'Parent task')
-            filtered_df = filtered_df[cols]
-        
-        buffer = io.StringIO()
-        filtered_df.to_csv(buffer, index=False)
-        buffer.seek(0)
-        
-        st.markdown(f"""
-        <div class="stats">
-            <div class="stat-box">
-                <div class="stat-value">{original_count}</div>
-                <div class="stat-label">Original</div>
+        if st.button("Clean CSV"):
+            original_count = len(df)
+            
+            mask = df[parent_col].apply(has_address)
+            filtered_df = df[mask].copy()
+            
+            filtered_df['__normalized_addr__'] = filtered_df[parent_col].apply(normalize_address)
+            filtered_df = filtered_df.drop_duplicates(subset='__normalized_addr__', keep='first')
+            filtered_df = filtered_df.drop(columns=['__normalized_addr__'])
+            
+            if parent_col in filtered_df.columns:
+                cols = list(filtered_df.columns)
+                parent_idx = cols.index(parent_col)
+                cols.remove(parent_col)
+                cols.insert(1, parent_col)
+                filtered_df = filtered_df[cols]
+            
+            final_count = len(filtered_df)
+            removed_count = original_count - final_count
+            duplicates_removed = original_count - len(df[mask]) if 'original_count' else 0
+            
+            buffer = io.StringIO()
+            filtered_df.to_csv(buffer, index=False)
+            buffer.seek(0)
+            
+            st.markdown(f"""
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-value">{original_count}</div>
+                    <div class="stat-label">Original</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">{final_count}</div>
+                    <div class="stat-label">Cleaned</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">{original_count - len(df[mask])}</div>
+                    <div class="stat-label">Subtasks</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">{len(df[mask]) - final_count}</div>
+                    <div class="stat-label">Duplicates</div>
+                </div>
             </div>
-            <div class="stat-box">
-                <div class="stat-value">{final_count}</div>
-                <div class="stat-label">Cleaned</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-value">{removed_count}</div>
-                <div class="stat-label">Removed</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown(f'<div class="success-box">✅ Cleaned file ready with {final_count} primary tasks</div>', unsafe_allow_html=True)
-        
-        st.download_button(
-            label="Download Cleaned CSV",
-            data=buffer.getvalue(),
-            file_name="cleaned_" + uploaded_file.name,
-            mime="text/csv"
-        )
+            """, unsafe_allow_html=True)
+            
+            st.markdown(f'<div class="success-box">✅ Cleaned file ready with {final_count} unique primary tasks</div>', unsafe_allow_html=True)
+            
+            st.download_button(
+                label="Download Cleaned CSV",
+                data=buffer.getvalue(),
+                file_name="cleaned_" + uploaded_file.name,
+                mime="text/csv"
+            )
 
 st.markdown('</div></div>', unsafe_allow_html=True)
