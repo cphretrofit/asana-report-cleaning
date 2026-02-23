@@ -17,10 +17,12 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
     
-    .main {
-        background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
-        min-height: 100vh;
-        padding: 2rem;
+    .main > div:first-child {
+        display: none;
+    }
+    
+    .block-container {
+        padding-top: 1rem !important;
     }
     
     .container {
@@ -100,7 +102,7 @@ st.markdown("""
     
     .stats {
         display: grid;
-        grid-template-columns: 1fr 1fr 1fr 1fr;
+        grid-template-columns: 1fr 1fr 1fr;
         gap: 1rem;
         margin: 1.5rem 0;
     }
@@ -177,10 +179,11 @@ def normalize_address(value):
     addr = ' '.join(addr.split())
     return addr
 
-def has_address(value):
+def is_address_only(value):
     if pd.isna(value) or str(value).strip() == "":
         return False
     val = str(value).strip().lower()
+    
     address_indicators = [
         'street', 'st,', 'st.', 'avenue', 'ave', 'road', 'rd', 'boulevard', 'blvd',
         'drive', 'dr', 'lane', 'ln', 'court', 'ct', 'place', 'pl', 'way',
@@ -190,7 +193,23 @@ def has_address(value):
         'north', 'south', 'east', 'west', 'n ', ' s ', ' e ', ' w ',
         '#', 'unit ', 'apt ', 'ste '
     ]
-    return any(indicator in val for indicator in address_indicators)
+    
+    has_address = any(indicator in val for indicator in address_indicators)
+    
+    non_address_patterns = [
+        'call', 'email', 'send', 'follow up', 'followup', 'check', 'review',
+        'submit', 'complete', 'finish', 'update', 'prepare', 'schedule',
+        'arrange', 'confirm', 'verify', 'process', 'create', 'draft',
+        'research', 'investigate', 'analyze', 'organize', 'file',
+        'pick up', 'drop off', 'deliver', 'install', 'fix', 'repair',
+        'clean', 'paint', 'replace', 'order', 'purchase', 'buy',
+        'meeting', 'note', 'task', 'todo', 'reminder', 'deadline',
+        'asap', 'urgent', 'priority', 'high', 'low', 'medium'
+    ]
+    
+    has_task_marker = any(marker in val for marker in non_address_patterns)
+    
+    return has_address and not has_task_marker
 
 st.markdown('<div class="container"><div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="title">🧹 CSV Cleaner</div>', unsafe_allow_html=True)
@@ -208,17 +227,20 @@ if uploaded_file:
     else:
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         
-        st.markdown(f'<p class="info-text">Primary tasks are identified by having an address in "{parent_col}". Subtasks without addresses and duplicate addresses will be removed.</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="info-text">Only rows with addresses ONLY in "{parent_col}" will be kept. Subtasks and duplicate addresses will be removed.</p>', unsafe_allow_html=True)
         
         if st.button("Clean CSV"):
             original_count = len(df)
             
-            mask = df[parent_col].apply(has_address)
+            mask = df[parent_col].apply(is_address_only)
             filtered_df = df[mask].copy()
             
             filtered_df['__normalized_addr__'] = filtered_df[parent_col].apply(normalize_address)
             filtered_df = filtered_df.drop_duplicates(subset='__normalized_addr__', keep='first')
             filtered_df = filtered_df.drop(columns=['__normalized_addr__'])
+            
+            cols_to_keep = [col for col in filtered_df.columns if col.lower() != 'name']
+            filtered_df = filtered_df[cols_to_keep]
             
             if parent_col in filtered_df.columns:
                 cols = list(filtered_df.columns)
@@ -228,8 +250,8 @@ if uploaded_file:
                 filtered_df = filtered_df[cols]
             
             final_count = len(filtered_df)
-            removed_count = original_count - final_count
-            duplicates_removed = original_count - len(df[mask]) if 'original_count' else 0
+            subtasks_removed = original_count - len(df[mask])
+            duplicates_removed = len(df[mask]) - final_count
             
             buffer = io.StringIO()
             filtered_df.to_csv(buffer, index=False)
@@ -246,12 +268,8 @@ if uploaded_file:
                     <div class="stat-label">Cleaned</div>
                 </div>
                 <div class="stat-box">
-                    <div class="stat-value">{original_count - len(df[mask])}</div>
-                    <div class="stat-label">Subtasks</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-value">{len(df[mask]) - final_count}</div>
-                    <div class="stat-label">Duplicates</div>
+                    <div class="stat-value">{subtasks_removed + duplicates_removed}</div>
+                    <div class="stat-label">Removed</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
