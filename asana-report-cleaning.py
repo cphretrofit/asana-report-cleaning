@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
 
 st.set_page_config(
     page_title="CSV Cleaner",
@@ -52,21 +53,6 @@ st.markdown("""
         font-size: 0.95rem;
     }
     
-    .upload-box {
-        border: 2px dashed #d1d5db;
-        border-radius: 12px;
-        padding: 2rem;
-        text-align: center;
-        transition: all 0.3s ease;
-        background: #fafafa;
-        margin-bottom: 1.5rem;
-    }
-    
-    .upload-box:hover {
-        border-color: #6366f1;
-        background: #f5f3ff;
-    }
-    
     .stFileUploader > div > div > div {
         background: transparent !important;
     }
@@ -91,13 +77,6 @@ st.markdown("""
     .btn-primary:hover {
         transform: translateY(-2px);
         box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
-    }
-    
-    .btn-primary:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-        transform: none;
-        box-shadow: none;
     }
     
     .stats {
@@ -136,27 +115,6 @@ st.markdown("""
         color: #065f46;
     }
     
-    .download-btn {
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        color: white;
-        border: none;
-        padding: 0.875rem 2rem;
-        border-radius: 10px;
-        font-weight: 600;
-        font-size: 1rem;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        display: block;
-        width: 100%;
-        text-align: center;
-        text-decoration: none;
-    }
-    
-    .download-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 24px rgba(16, 185, 129, 0.35);
-    }
-    
     .divider {
         height: 1px;
         background: #e5e7eb;
@@ -179,37 +137,38 @@ def normalize_address(value):
     addr = ' '.join(addr.split())
     return addr
 
-def is_address_only(value):
-    if pd.isna(value) or str(value).strip() == "":
+def looks_like_address(value):
+    if pd.isna(value):
         return False
-    val = str(value).strip().lower()
     
-    address_indicators = [
-        'street', 'st,', 'st.', 'avenue', 'ave', 'road', 'rd', 'boulevard', 'blvd',
-        'drive', 'dr', 'lane', 'ln', 'court', 'ct', 'place', 'pl', 'way',
-        'floor', 'suite', 'ste', 'unit', 'building', 'bldg',
-        'apartment', 'apt', 'house', 'box', 'po box',
-        'city', 'state', 'zip', 'postal',
-        'north', 'south', 'east', 'west', 'n ', ' s ', ' e ', ' w ',
-        '#', 'unit ', 'apt ', 'ste '
+    val = str(value).strip()
+    val_lower = val.lower()
+    
+    if not val or val == "":
+        return False
+    
+    address_patterns = [
+        r'\b(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|court|ct|place|pl|way|terrace|ter)\b',
+        r'\b(suite|ste|floor|unit|building|bldg|apartment|apt|house)\b',
+        r'\b(po box|pobox|box)\b',
+        r'\b(north|south|east|west|n\.?|s\.?|e\.?|w\.?)\b',
+        r'\b(city|state|zip|postal)\b',
+        r'\d+\s+(street|avenue|road|drive|lane|boulevard|way|place)',
     ]
     
-    has_address = any(indicator in val for indicator in address_indicators)
+    for pattern in address_patterns:
+        if re.search(pattern, val_lower):
+            return True
     
-    non_address_patterns = [
-        'call', 'email', 'send', 'follow up', 'followup', 'check', 'review',
-        'submit', 'complete', 'finish', 'update', 'prepare', 'schedule',
-        'arrange', 'confirm', 'verify', 'process', 'create', 'draft',
-        'research', 'investigate', 'analyze', 'organize', 'file',
-        'pick up', 'drop off', 'deliver', 'install', 'fix', 'repair',
-        'clean', 'paint', 'replace', 'order', 'purchase', 'buy',
-        'meeting', 'note', 'task', 'todo', 'reminder', 'deadline',
-        'asap', 'urgent', 'priority', 'high', 'low', 'medium'
-    ]
+    if re.search(r'#\s*\d+', val):
+        return True
     
-    has_task_marker = any(marker in val for marker in non_address_patterns)
+    parts = val.split()
+    if len(parts) >= 3:
+        if re.match(r'^\d+', val) and any(x in val_lower for x in ['street', 'avenue', 'road', 'drive', 'lane', 'court', 'way', 'place', 'blvd', 'ave', 'st', 'rd']):
+            return True
     
-    return has_address and not has_task_marker
+    return False
 
 st.markdown('<div class="container"><div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="title">🧹 CSV Cleaner</div>', unsafe_allow_html=True)
@@ -227,12 +186,12 @@ if uploaded_file:
     else:
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         
-        st.markdown(f'<p class="info-text">Only rows with addresses ONLY in "{parent_col}" will be kept. Subtasks and duplicate addresses will be removed.</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="info-text">Only rows with valid addresses in "{parent_col}" will be kept. All other rows will be removed.</p>', unsafe_allow_html=True)
         
         if st.button("Clean CSV"):
             original_count = len(df)
             
-            mask = df[parent_col].apply(is_address_only)
+            mask = df[parent_col].apply(looks_like_address)
             filtered_df = df[mask].copy()
             
             filtered_df['__normalized_addr__'] = filtered_df[parent_col].apply(normalize_address)
@@ -250,8 +209,7 @@ if uploaded_file:
                 filtered_df = filtered_df[cols]
             
             final_count = len(filtered_df)
-            subtasks_removed = original_count - len(df[mask])
-            duplicates_removed = len(df[mask]) - final_count
+            removed_count = original_count - final_count
             
             buffer = io.StringIO()
             filtered_df.to_csv(buffer, index=False)
@@ -265,16 +223,16 @@ if uploaded_file:
                 </div>
                 <div class="stat-box">
                     <div class="stat-value">{final_count}</div>
-                    <div class="stat-label">Cleaned</div>
+                    <div class="stat-label">Kept</div>
                 </div>
                 <div class="stat-box">
-                    <div class="stat-value">{subtasks_removed + duplicates_removed}</div>
+                    <div class="stat-value">{removed_count}</div>
                     <div class="stat-label">Removed</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
-            st.markdown(f'<div class="success-box">✅ Cleaned file ready with {final_count} unique primary tasks</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="success-box">✅ Cleaned file ready with {final_count} addresses</div>', unsafe_allow_html=True)
             
             st.download_button(
                 label="Download Cleaned CSV",
