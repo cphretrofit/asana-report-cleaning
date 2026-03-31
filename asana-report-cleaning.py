@@ -250,6 +250,12 @@ if uploaded_file:
                     cols.remove(notes_col)
                 filtered_df = filtered_df[cols]
 
+            # Step 5: Keep only the final columns
+            keep_cols = ['Task ID', parent_col]
+            if 'UPRN Number' in filtered_df.columns:
+                keep_cols.append('UPRN Number')
+            filtered_df = filtered_df[keep_cols]
+
             # ── Output ───────────────────────────────────────────────────
             buffer = io.StringIO()
             filtered_df.to_csv(buffer, index=False)
