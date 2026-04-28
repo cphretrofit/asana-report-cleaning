@@ -9,6 +9,10 @@ import re
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = True
 
+def _toggle_theme():
+    """Callback: fires BEFORE rerun so session_state is correct when CSS is built."""
+    st.session_state.dark_mode = st.session_state._theme_toggle
+
 st.set_page_config(
     page_title="CPH Retrofit — CSV Cleaner",
     page_icon="🏠",
@@ -61,7 +65,6 @@ if dark:
     BTN_DL_HOVER  = "rgba(0,195,160,0.10)"
     INPUT_TXT     = "rgba(255,255,255,0.50)"
     LOGO_FILTER   = "drop-shadow(0 0 18px rgba(0,195,160,0.35))"
-    TOGGLE_LABEL  = "☀️  Light mode"
     DIVIDER_COLOR = "rgba(0,195,160,0.35), rgba(59,130,246,0.35)"
 else:
     BG_MAIN       = "#eef2f7"
@@ -95,7 +98,6 @@ else:
     BTN_DL_HOVER  = "rgba(0,160,130,0.08)"
     INPUT_TXT     = "#7a8fa8"
     LOGO_FILTER   = "drop-shadow(0 4px 12px rgba(0,0,0,0.15))"
-    TOGGLE_LABEL  = "🌙  Dark mode"
     DIVIDER_COLOR = "rgba(0,160,130,0.35), rgba(37,99,235,0.35)"
 
 st.markdown(f"""
@@ -414,10 +416,12 @@ with logo_col:
 
 with toggle_col:
     st.markdown("<div style='padding-top:1.6rem'></div>", unsafe_allow_html=True)
-    new_mode = st.toggle(TOGGLE_LABEL, value=st.session_state.dark_mode)
-    if new_mode != st.session_state.dark_mode:
-        st.session_state.dark_mode = new_mode
-        st.rerun()
+    st.toggle(
+        "🌓  Dark mode",
+        value=st.session_state.dark_mode,
+        key="_theme_toggle",
+        on_change=_toggle_theme,
+    )
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  UPLOAD
@@ -474,6 +478,7 @@ if uploaded_file:
         st.markdown('<hr class="grad-divider">', unsafe_allow_html=True)
 
         if st.button("✦  Clean CSV"):
+          with st.spinner("Cleaning CSV — filtering addresses, extracting postcodes & UPRN numbers…"):
             # Step 1 — filter to address rows
             address_mask = df[parent_col].apply(is_address)
             filtered_df  = df[address_mask].copy()
